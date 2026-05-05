@@ -1,0 +1,6 @@
+pandas==3.0.2
+psycopg2-binary==2.9.12
+pyarrow==24.0.0
+python-dotenv==1.2.2
+scikit-learn==1.8.0
+sqlalchemy==2.0.49
