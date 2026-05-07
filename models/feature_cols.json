@@ -1,0 +1,15 @@
+[
+  "month",
+  "day_of_week",
+  "is_weekend",
+  "days_until_flight",
+  "dep_hour",
+  "time_of_day",
+  "duration_minutes",
+  "stop_enc",
+  "class_enc",
+  "airline_enc",
+  "source_enc",
+  "dest_enc",
+  "route_enc"
+]
