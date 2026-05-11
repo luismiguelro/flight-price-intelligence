@@ -1,8 +1,11 @@
 .env
 __pycache__/
 *.pyc
+# Excluir binarios globalmente EXCEPTO los artefactos del modelo entrenado
 *.pkl
 *.joblib
+!models/encoders.pkl
+!models/xgboost_v1.joblib
 .venv/
 venv/
 mlruns/
