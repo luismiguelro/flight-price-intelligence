@@ -87,6 +87,74 @@ def call_predict_api(payload: dict) -> dict | None:
         return None
 
 
+def fetch_price_curve(
+    origin: str, destination: str, airline: str,
+    flight_class: str, stops: str, duration_minutes: int, departure_time: str,
+) -> list[dict]:
+    try:
+        r = requests.get(
+            f"{API_URL}/price_curve",
+            params={
+                "origin":            origin,
+                "destination":       destination,
+                "departure_time":    departure_time or "08:00",
+                "airline":           airline,
+                "flight_class":      flight_class,
+                "stops":             stops,
+                "duration_minutes":  duration_minutes,
+            },
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json().get("curve", [])
+    except Exception as e:
+        st.warning(f"No se pudo cargar la curva de precios: {e}")
+        return []
+
+
+def price_curve_chart(curve: list[dict], current_price: float) -> go.Figure:
+    days   = [p["days_until_flight"] for p in curve]
+    prices = [p["predicted_price"]   for p in curve]
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=days, y=prices,
+        fill="tozeroy",
+        fillcolor="rgba(59,130,246,0.08)",
+        line=dict(color="#3b82f6", width=2.5),
+        mode="lines+markers",
+        marker=dict(size=6, color="#3b82f6"),
+        name="Precio predicho",
+        hovertemplate="<b>%{x} días antes</b><br>₹%{y:,.0f}<extra></extra>",
+    ))
+
+    fig.add_hline(
+        y=current_price,
+        line_dash="dash",
+        line_color="#ef4444",
+        line_width=1.5,
+        annotation_text=f"Precio actual  ₹{current_price:,.0f}",
+        annotation_position="top right",
+        annotation_font_color="#ef4444",
+    )
+
+    fig.update_layout(
+        title=dict(text="Precio predicho según días de anticipación de compra", font_size=14),
+        xaxis=dict(
+            title="Días de anticipación",
+            autorange="reversed",
+            tickvals=days,
+        ),
+        yaxis=dict(title="Precio (INR)", tickformat=",.0f"),
+        height=300,
+        margin=dict(t=50, b=40, l=70, r=20),
+        hovermode="x unified",
+        showlegend=False,
+    )
+    return fig
+
+
 def signal_gauge(current: float, predicted: float) -> go.Figure:
     diff_pct = (current - predicted) / predicted * 100
     color = "#ef4444" if diff_pct > 5 else "#22c55e"
@@ -279,6 +347,26 @@ if submitted:
 
         # Explicación
         st.info(result["explanation"])
+
+        # Line chart: curva de precio por anticipación
+        with st.spinner("Cargando curva de precios..."):
+            curve = fetch_price_curve(
+                origin, destination,
+                cheapest["airline"],
+                flight_class,
+                stops_label(cheapest["stops"]),
+                cheapest["duration_minutes"],
+                cheapest["departure_time"] or "08:00",
+            )
+
+        if curve:
+            st.subheader("📈 ¿Cuándo conviene comprar en esta ruta?")
+            st.plotly_chart(price_curve_chart(curve, result["current_price"]), use_container_width=True)
+            st.caption(
+                "Predicciones del modelo XGBoost según días de anticipación · "
+                "Entrenado con vuelos domésticos India Feb–Mar 2022 · "
+                "La línea roja es el precio actual de Google Flights"
+            )
 
 st.divider()
 st.caption("Modelo entrenado con datos de vuelos domésticos India (Feb–Mar 2022) · "

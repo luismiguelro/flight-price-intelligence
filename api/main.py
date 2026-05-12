@@ -122,9 +122,13 @@ def _normalize_airline(name: str) -> str:
     return normalized
 
 
-def build_input(req: PredictRequest) -> pd.DataFrame:
-    flight_dt = pd.Timestamp(req.flight_date)
-    dep_hour  = int(req.departure_time.split(":")[0])
+def _build_feature_row(
+    origin: str, destination: str, days_until_flight: int,
+    dep_hour: int, duration_minutes: int,
+    stop_enc: int, class_enc: int, airline_norm: str,
+) -> pd.DataFrame:
+    """Construye un DataFrame de features dado days_until_flight explícito."""
+    flight_dt = SCRAPE_DATE + pd.Timedelta(days=days_until_flight)
 
     time_of_day = pd.cut(
         pd.Series([dep_hour]),
@@ -132,24 +136,36 @@ def build_input(req: PredictRequest) -> pd.DataFrame:
         labels=[0, 1, 2, 3],
     ).astype(int).iloc[0]
 
-    route = f"{req.origin}_{req.destination}"
+    route = f"{origin}_{destination}"
 
     row = {
         "month":             flight_dt.month,
         "day_of_week":       flight_dt.dayofweek,
         "is_weekend":        int(flight_dt.dayofweek >= 5),
-        "days_until_flight": (flight_dt - SCRAPE_DATE).days,
+        "days_until_flight": days_until_flight,
         "dep_hour":          dep_hour,
         "time_of_day":       int(time_of_day),
-        "duration_minutes":  req.duration_minutes,
-        "stop_enc":          STOP_MAP[req.stops],
-        "class_enc":         CLASS_MAP[req.flight_class],
-        "airline_enc":       encoders["airline"].transform([_normalize_airline(req.airline)])[0],
-        "source_enc":        encoders["from"].transform([req.origin])[0],
-        "dest_enc":          encoders["to"].transform([req.destination])[0],
+        "duration_minutes":  duration_minutes,
+        "stop_enc":          stop_enc,
+        "class_enc":         class_enc,
+        "airline_enc":       encoders["airline"].transform([airline_norm])[0],
+        "source_enc":        encoders["from"].transform([origin])[0],
+        "dest_enc":          encoders["to"].transform([destination])[0],
         "route_enc":         encoders["route"].transform([route])[0],
     }
     return pd.DataFrame([row])[FEATURE_COLS]
+
+
+def build_input(req: PredictRequest) -> pd.DataFrame:
+    flight_dt = pd.Timestamp(req.flight_date)
+    dep_hour  = int(req.departure_time.split(":")[0])
+    days_until_flight = (flight_dt - SCRAPE_DATE).days
+    return _build_feature_row(
+        req.origin, req.destination, days_until_flight,
+        dep_hour, req.duration_minutes,
+        STOP_MAP[req.stops], CLASS_MAP[req.flight_class],
+        _normalize_airline(req.airline),
+    )
 
 
 def compute_signal(current: float, predicted: float) -> tuple[str, str, float, float]:
@@ -212,3 +228,46 @@ def predict(req: PredictRequest):
         price_diff_pct=diff_pct,
         explanation=explanation,
     )
+
+
+@app.get("/price_curve")
+def price_curve(
+    origin:           str,
+    destination:      str,
+    departure_time:   str = "08:00",
+    airline:          str = "IndiGo",
+    flight_class:     str = "Economy",
+    stops:            str = "1-stop",
+    duration_minutes: int = 120,
+):
+    """Retorna predicciones del modelo para distintos días de anticipación (1–60 días)."""
+    if origin not in VALID_CITIES:
+        raise HTTPException(422, f"Ciudad no soportada: {origin}")
+    if destination not in VALID_CITIES:
+        raise HTTPException(422, f"Ciudad no soportada: {destination}")
+    if flight_class not in CLASS_MAP:
+        raise HTTPException(422, f"Clase inválida: {flight_class}")
+    if stops not in STOP_MAP:
+        raise HTTPException(422, f"Stops inválido: {stops}")
+
+    try:
+        airline_norm = _normalize_airline(airline)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+    dep_hour = int(departure_time.split(":")[0])
+
+    curve = []
+    for days in [1, 3, 5, 7, 10, 14, 21, 30, 45, 60]:
+        X = _build_feature_row(
+            origin, destination, days,
+            dep_hour, duration_minutes,
+            STOP_MAP[stops], CLASS_MAP[flight_class],
+            airline_norm,
+        )
+        curve.append({
+            "days_until_flight": days,
+            "predicted_price":   round(float(model.predict(X)[0]), 0),
+        })
+
+    return {"curve": curve, "origin": origin, "destination": destination}
