@@ -15,6 +15,14 @@ from serpapi import GoogleSearch
 
 load_dotenv()
 
+# Streamlit Cloud expone secrets via st.secrets, no como env vars.
+# Este bloque los mapea a os.environ para que os.getenv() funcione igual en local y en cloud.
+try:
+    for _k, _v in st.secrets.items():
+        os.environ.setdefault(_k, str(_v))
+except Exception:
+    pass
+
 # ---------------------------------------------------------------------------
 # Configuracion
 # ---------------------------------------------------------------------------
