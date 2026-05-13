@@ -1,138 +1,139 @@
 # Flight Price Intelligence ✈️
 
-> **¿Compro el vuelo ahora o espero?**
-> Compara el precio real de Google Flights contra la predicción del modelo y emite una señal **Compra ahora / Espera** con porcentaje de confianza.
+> **Should I buy this flight now or wait?**
+> Compares real Google Flights prices against a machine learning model prediction and outputs a **Buy Now / Wait** signal with confidence score.
 
 [![API](https://img.shields.io/badge/API-Render-46E3B7?logo=render)](https://flight-price-intelligence.onrender.com/docs)
 [![Demo](https://img.shields.io/badge/Demo-Streamlit-FF4B4B?logo=streamlit)](https://flight-price-intelligence.streamlit.app)
+[![README en Español](https://img.shields.io/badge/README-Español-blue)](README.es.md)
 
 ---
 
-## El problema
+## The Problem
 
-Los precios de los vuelos cambian decenas de veces al día. Sin un punto de referencia, el viajero no sabe si el precio que ve es bueno o si conviene esperar. Este proyecto construye ese punto de referencia: un modelo entrenado con 300k vuelos domésticos de India que predice el precio esperado para una ruta y, al compararlo con el precio actual en Google Flights, emite una señal accionable.
-
----
-
-## Demo en vivo
-
-1. Selecciona origen, destino y fecha
-2. La app consulta Google Flights (via SerpAPI) y muestra las opciones reales
-3. El modelo predice el precio esperado para esa ruta
-4. Ves la señal **✅ Compra ahora** o **⏳ Espera** con % de confianza y gráfico de curva de precios por anticipación
+Flight prices change dozens of times a day. Without a reference point, travelers have no way to know if the price they see is fair or if waiting would save them money. This project builds that reference point: a model trained on 300k domestic India flights that predicts the expected price for a route and, when compared to the live Google Flights price, outputs an actionable signal.
 
 ---
 
-## Arquitectura
+## Live Demo
+
+1. Select origin, destination, and travel date
+2. The app queries Google Flights (via SerpAPI) and displays real flight options
+3. The model predicts the expected price for that route
+4. You get a **✅ Buy Now** or **⏳ Wait** signal with confidence % and a price curve chart showing how prices typically behave by booking window
+
+---
+
+## Architecture
 
 ```
-ENTRENAMIENTO
+TRAINING
 ─────────────────────────────────────────────────────────────────────
-Dataset Kaggle (300k vuelos India, Feb–Mar 2022)
+Kaggle Dataset (300k India domestic flights, Feb–Mar 2022)
   │
-  ├─ Supabase PostgreSQL  ←  carga raw (raw_flights)
+  ├─ Supabase PostgreSQL  ←  raw load (raw_flights table)
   │
   ├─ Feature Engineering
   │     days_until_flight · month · day_of_week · is_weekend
   │     dep_hour · time_of_day · duration_minutes
   │     stops · class · airline · source · destination · route
   │
-  ├─ MLflow Tracking
+  ├─ MLflow Experiment Tracking
   │     Linear Regression  →  MAE 9,842  R² 0.71
   │     KNN (k=10)         →  MAE 4,201  R² 0.88
-  │     XGBoost            →  MAE 2,088  R² 0.97  ✅ seleccionado
+  │     XGBoost            →  MAE 2,088  R² 0.97  ✅ selected
   │
-  └─ Artefactos: xgboost_v1.joblib · encoders.pkl · feature_cols.json
+  └─ Artifacts: xgboost_v1.joblib · encoders.pkl · feature_cols.json
 
-INFERENCIA EN VIVO
+LIVE INFERENCE
 ─────────────────────────────────────────────────────────────────────
-Usuario ingresa origen / destino / fecha
+User inputs origin / destination / date
   │
-  ├─ SerpAPI (Google Flights)  →  precio actual real (INR)
+  ├─ SerpAPI (Google Flights)  →  live price in INR
   │
   ├─ FastAPI /predict (Render)
   │     build_features(request)  →  model.predict()
-  │     señal BUY / WAIT + confianza + explicación
+  │     BUY / WAIT signal + confidence + explanation
   │
   ├─ FastAPI /price_curve (Render)
-  │     predicciones para 10 ventanas de anticipación (1–60 días)
+  │     predictions for 10 booking windows (1–60 days ahead)
   │
   └─ Streamlit Cloud
-        tarjetas de vuelo estilo Google Flights
-        gauge precio actual vs predicho
-        line chart curva de precio por anticipación
+        Google Flights-style flight cards
+        gauge: current price vs predicted price
+        line chart: price curve by booking window
 ```
 
 ---
 
-## Por qué XGBoost
+## Why XGBoost
 
-| Modelo | MAE (INR) | R² | Tiempo entrenamiento |
+| Model | MAE (INR) | R² | Training time |
 |---|---:|---:|---|
 | Linear Regression | 9,842 | 0.71 | < 1s |
 | KNN (k=10) | 4,201 | 0.88 | 8s |
 | **XGBoost** | **2,088** | **0.97** | 45s |
 
-**Linear Regression** captura la tendencia general pero no modela la no-linealidad del precio por ruta: una misma distancia puede costar 3× más si la aerolínea es Vistara Business vs IndiGo Economy.
+**Linear Regression** captures the general trend but fails to model the non-linearity of flight pricing: the same route can cost 3× more depending on airline (Vistara Business vs IndiGo Economy) or booking window.
 
-**KNN** mejora al comparar vuelos similares, pero es sensible a la escala y a rutas con pocos registros (< 7k vuelos). Las rutas cortas tipo Chennai→Hyderabad producen predicciones ruidosas.
+**KNN** improves by comparing similar flights, but is sensitive to feature scale and underperforms on routes with sparse data (< 7k flights). Short routes like Chennai→Hyderabad produce noisy predictions.
 
-**XGBoost** captura interacciones entre features (ruta × aerolínea × días de anticipación) sin normalización manual. Con `n_estimators=300, max_depth=6, learning_rate=0.05` logra R² 0.97 y un MAE de ~2,000 INR sobre un rango de precios de 2,000–115,000 INR (~1.7% de error relativo en la mediana).
+**XGBoost** captures interactions between features (route × airline × days until flight) without manual normalization. With `n_estimators=300, max_depth=6, learning_rate=0.05` it achieves R² 0.97 and a MAE of ~2,000 INR over a price range of 2,000–115,000 INR (~1.7% relative error at the median).
 
 ---
 
-## Decisiones técnicas
+## Technical Decisions
 
-**`days_until_flight` como proxy de booking window**
-El dataset de Kaggle no registra la fecha de compra, solo la fecha de vuelo y la fecha de scraping (2022-02-11). Se aproximó `days_until_flight = flight_date − scrape_date`. Esto captura la variación de precio por anticipación de forma relativa, aunque no es una fecha de compra real.
+**`days_until_flight` as a booking window proxy**
+The Kaggle dataset does not record the purchase date — only the flight date and the scraping date (2022-02-11). `days_until_flight = flight_date − scrape_date` was used as a proxy. This captures relative price variation by anticipation, though it is not a true purchase date.
 
-**Señal BUY/WAIT con zona de tolerancia del 5%**
-Un precio actual dentro del ±5% del precio predicho se clasifica como BUY. Por encima del 5% es WAIT. La confianza se normaliza a `min(|diff_pct| / 30, 1.0)`: a mayor distancia del precio predicho, mayor certeza de la señal.
+**BUY/WAIT signal with a 5% tolerance band**
+A current price within ±5% of the predicted price is classified as BUY. Above 5% is WAIT. Confidence is normalized as `min(|diff_pct| / 30, 1.0)`: the further the current price is from the prediction, the higher the signal confidence.
 
-**FastAPI deployada en Render (Free tier)**
-El modelo pesa ~8MB. Render Free hace cold start de ~30s si lleva inactivo. Se agregó `/health` para mantener el endpoint caliente desde Streamlit si fuera necesario.
+**FastAPI on Render (Free tier)**
+The model weighs ~8MB. Render Free has a ~30s cold start after inactivity. A `/health` endpoint is exposed for keep-alive pings if needed.
 
-**`/price_curve` en lugar de múltiples calls a `/predict`**
-En lugar de que Streamlit llame 10 veces a `/predict` para construir el gráfico, un único `GET /price_curve` genera todas las predicciones del lado del servidor. Reduce latencia y simplifica el código cliente.
+**Server-side `/price_curve` instead of 10 client calls**
+Instead of Streamlit calling `/predict` 10 times to build the booking-window chart, a single `GET /price_curve` generates all predictions server-side. Reduces latency and simplifies the client.
 
 ---
 
 ## Model Card
 
-| Campo | Detalle |
+| Field | Detail |
 |---|---|
-| Modelo | XGBoost Regressor |
-| Dataset | [Ease My Trip Flight Dataset](https://www.kaggle.com/datasets/shubhambathwal/flight-price-prediction) — 300,261 vuelos |
-| Cobertura | Vuelos domésticos India, Feb–Mar 2022 |
-| Features | 13 (temporales, ruta, aerolínea, clase, escalas, duración) |
-| Métrica principal | MAE 2,088 INR · R² 0.97 |
-| Artefacto | `models/xgboost_v1.joblib` |
-| Tracking | MLflow local (`mlruns/`) |
-| Limitaciones | Precios INR de 2022 · Solo 6 ciudades · Sin fecha de compra real |
+| Model | XGBoost Regressor |
+| Dataset | [Ease My Trip Flight Dataset](https://www.kaggle.com/datasets/shubhambathwal/flight-price-prediction) — 300,261 flights |
+| Coverage | Domestic India flights, Feb–Mar 2022 |
+| Features | 13 (temporal, route, airline, class, stops, duration) |
+| Primary metric | MAE 2,088 INR · R² 0.97 |
+| Artifact | `models/xgboost_v1.joblib` |
+| Experiment tracking | MLflow local (`mlruns/`) |
+| Limitations | INR prices from 2022 · 6 cities only · No real purchase date |
 
 ---
 
 ## Stack
 
-| Capa | Tecnología |
+| Layer | Technology |
 |---|---|
-| Datos | Kaggle CSV → Supabase PostgreSQL |
+| Data | Kaggle CSV → Supabase PostgreSQL |
 | Feature Engineering | Python · pandas · scikit-learn |
-| Experimentación | MLflow (local) |
-| Modelo | XGBoost |
+| Experimentation | MLflow (local) |
+| Model | XGBoost |
 | API | FastAPI · Render |
-| Precios en vivo | SerpAPI (Google Flights) |
+| Live prices | SerpAPI (Google Flights) |
 | Frontend | Streamlit Cloud |
 
 ---
 
-## Rutas soportadas
+## Supported Routes
 
-6 ciudades · 30 rutas · ver [`docs/supported_routes.md`](docs/supported_routes.md) para volumen de datos y aerolíneas por ruta.
+6 cities · 30 routes · see [`docs/supported_routes.md`](docs/supported_routes.md) for data volume and airlines per route.
 
 ---
 
-## Instalación local
+## Local Setup
 
 ```bash
 git clone https://github.com/luismiguelro/flight-price-intelligence.git
@@ -140,37 +141,37 @@ cd flight-price-intelligence
 
 pip install -r requirements-dev.txt
 
-# Variables de entorno
+# Environment variables
 cp .env.example .env
-# Editar .env con SERPAPI_KEY y DATABASE_URL
+# Edit .env with SERPAPI_KEY and DATABASE_URL
 
-# Levantar la API
+# Start the API
 uvicorn api.main:app --reload
 
-# En otra terminal, levantar la app
+# In another terminal, start the app
 streamlit run streamlit_app.py
 ```
 
 ---
 
-## Estructura del repo
+## Repository Structure
 
 ```
 flight-price-intelligence/
 ├── api/
 │   └── main.py              # FastAPI: /predict + /price_curve
 ├── models/
-│   ├── xgboost_v1.joblib    # Modelo exportado
-│   ├── encoders.pkl         # LabelEncoders de aerolínea/ruta/ciudad
-│   └── feature_cols.json    # Orden de features del modelo
+│   ├── xgboost_v1.joblib    # Exported model
+│   ├── encoders.pkl         # LabelEncoders for airline/route/city
+│   └── feature_cols.json    # Feature order expected by the model
 ├── notebooks/
-│   ├── 01_eda.ipynb         # Análisis exploratorio (10 secciones)
+│   ├── 01_eda.ipynb         # Exploratory analysis (10 sections)
 │   └── 02_feature_engineering.py
 ├── src/
 │   └── train_models.py      # MLflow: Linear, KNN, XGBoost
 ├── docs/
-│   └── supported_routes.md  # Rutas y aerolíneas disponibles
-├── streamlit_app.py         # App completa
-├── requirements.txt         # Dependencias API + Streamlit Cloud
-└── requirements-dev.txt     # Dependencias de entrenamiento (MLflow, etc.)
+│   └── supported_routes.md  # Available routes and airlines
+├── streamlit_app.py         # Full Streamlit app
+├── requirements.txt         # API + Streamlit Cloud dependencies
+└── requirements-dev.txt     # Training dependencies (MLflow, etc.)
 ```
