@@ -87,9 +87,12 @@ def stops_label(n: int) -> str:
 
 def call_predict_api(payload: dict) -> dict | None:
     try:
-        r = requests.post(f"{API_URL}/predict", json=payload, timeout=15)
+        r = requests.post(f"{API_URL}/predict", json=payload, timeout=45)
         r.raise_for_status()
         return r.json()
+    except requests.exceptions.Timeout:
+        st.warning("⏳ La API está despertando (cold start ~30s). Vuelve a intentarlo en unos segundos.")
+        return None
     except Exception as e:
         st.error(f"Error llamando a la API: {e}")
         return None
@@ -111,10 +114,12 @@ def fetch_price_curve(
                 "stops":             stops,
                 "duration_minutes":  duration_minutes,
             },
-            timeout=15,
+            timeout=45,
         )
         r.raise_for_status()
         return r.json().get("curve", [])
+    except requests.exceptions.Timeout:
+        return []
     except Exception as e:
         st.warning(f"No se pudo cargar la curva de precios: {e}")
         return []
